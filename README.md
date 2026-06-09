@@ -1,162 +1,180 @@
-# South German Credit Risk Prediction
+# 💳 South German Credit Risk — CRISP-ML Project
 
-A machine learning project for classifying credit applicants as good or bad risk using the South German Credit dataset.
-
-## Overview
-
-This project addresses the challenge of credit risk assessment with imbalanced data (70% good credit, 30% bad credit). It includes exploratory analysis, model comparison with multiple classifiers, class imbalance handling techniques, and a Streamlit web application for real-time predictions.
-
-**Best Model**: XGBoost with SMOTETomek resampling
-
-Metrics are reported as a **stable 15-fold cross-validated estimate** (mean ± sd) of the final pipeline, rather than a single 150-row test draw — a small held-out test set is high-variance on this dataset (see notebook §5.3b).
-
-| Metric    | CV (mean ± sd) |
-|-----------|----------------|
-| Accuracy  | 0.75 ± 0.04    |
-| Recall    | 0.50 ± 0.06    |
-| F1 Score  | 0.54 ± 0.06    |
-| ROC-AUC   | 0.77 ± 0.04    |
-
-> The original master's notebook reported Recall ≈ 0.556 from an *unseeded* val/test split; that value sits at ~the 82nd percentile of the split-to-split distribution — a favorable but normal draw of the same process, not a different model.
+A complete **CRISP-ML(Q)** (Cross-Industry Standard Process for Machine Learning with Quality Assurance) pipeline for predicting whether a credit applicant is a **good (0)** or **bad (1)** credit risk, on an imbalanced dataset where detecting the minority class is what matters most.
 
 ## Project Structure
 
 ```
-south_german_credit/
+south-german-credit/
 ├── app/
-│   ├── app.py                  # Streamlit web application
-│   ├── config.py               # Paths, feature groups, hyperparameters
-│   ├── data_loader.py          # Loading + 70/15/15 stratified split
-│   ├── preprocessing.py        # ColumnTransformer pipelines
-│   ├── models.py               # 7 algorithms + tuned XGBoost
-│   ├── training.py             # CV, resamplers, GridSearch helpers
-│   └── evaluation.py           # Metrics, confusion matrix, ROC, boxplots
-├── archive/                    # Original master's exercise + reference paper
+│   └── app.py              # Streamlit deployment app (real-time predictor)
 ├── data/
-│   └── SouthGermanCredit.csv   # Dataset (1000 records, 21 features)
-├── models/
-│   └── best_model.joblib       # Trained XGBoost + SMOTETomek pipeline
+│   └── SouthGermanCredit.csv       # Dataset (1000 records, 20 features)
+├── model/
+│   ├── best_model.joblib           # Trained pipeline (preprocess + SMOTE + XGB)
+│   └── model_metadata.pkl          # Metrics, params, feature columns
 ├── notebooks/
-│   └── CRISP_ML_SouthGermanCredit.ipynb        # Main analysis notebook
+│   └── CRISP_ML_SouthGermanCredit.ipynb   # Full CRISP-ML analysis (Phases 1–6)
 ├── requirements.txt
 └── README.md
 ```
 
 ## Dataset
 
-The South German Credit dataset contains 1000 credit applicants with 20 features:
+**Source:** South German Credit (UCI Machine Learning Repository)
+**Size:** 1,000 applicants, 20 features
 
-| Feature | Description |
-|---------|-------------|
-| `status` | Account status (1-4) |
-| `duration` | Loan duration in months |
-| `credit_history` | Payment history (0-4) |
-| `purpose` | Loan purpose (0-10) |
-| `amount` | Credit amount in DM |
-| `savings` | Savings account balance (1-5) |
-| `employment_duration` | Current employment length (1-5) |
-| `installment_rate` | Installment as % of income (1-4) |
-| `personal_status_sex` | Personal status and sex (1-4) |
-| `other_debtors` | Other debtors/guarantors (1-3) |
-| `present_residence_since` | Years at current residence (1-4) |
-| `property` | Property type (1-4) |
-| `age` | Age in years |
-| `other_installment_plans` | Other installment plans (1-3) |
-| `housing` | Housing type (1-3) |
-| `number_credits` | Number of existing credits (1-4) |
-| `job` | Job type (1-4) |
-| `people_liable` | Number of dependents (1-2) |
-| `telephone` | Has telephone (1-2) |
-| `foreign_worker` | Is foreign worker (1-2) |
+### Key Features
 
-**Target**: `credit_risk` (0 = bad, 1 = good)
+| Category    | Features                                                          |
+| ----------- | ----------------------------------------------------------------- |
+| Account     | status, savings, credit_history, number_credits                   |
+| Loan        | duration, amount, purpose, installment_rate, other_installment_plans |
+| Applicant   | age, personal_status_sex, employment_duration, job, housing       |
+| Other       | other_debtors, property, present_residence_since, people_liable, telephone, foreign_worker |
 
-## Installation
+**Target:** `credit_risk` — 0 = good, 1 = bad (binary classification)
+**Class Imbalance:** ~70% good vs ~30% bad (2.33 : 1)
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd south_german_credit
+---
 
-# Create virtual environment (optional)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+## CRISP-ML(Q) Pipeline
 
-# Install dependencies
-pip install -r requirements.txt
-```
+### Phase 1 — Business Understanding
 
-## Usage
+- **Goal:** Flag bad-credit applicants before a loan is approved
+- **Business Value:** Avoid defaults (lost principal + interest), the costliest error
+- **Cost asymmetry:** A False Negative (approve a bad credit) is far more expensive than a False Positive → **Recall on the bad class is the primary KPI**
+- **Success Criteria:** Recall ≥ 0.50, ROC-AUC ≥ 0.75, train/test gap < 5%
 
-### Run the Web Application
+---
 
-```bash
-# 1) Precompute the dashboard artifacts (one time, ~1 min) — tables + figures
-python -m app.precompute
+### Phase 2 — Data Understanding
 
-# 2) Launch the multi-page CRISP-ML dashboard + predictor
-streamlit run app/app.py
-```
+- 1,000 observations, no missing values
+- Strong class imbalance (~30% bad credit)
+- `duration` and `amount` right-skewed; `age` roughly normal
+- Account `status` and `credit_history` separate risk strongly
 
-The app is a **multi-page CRISP-ML dashboard**: Resumen, Datos (EDA), Modelado,
-Evaluación (CV estable + varianza del split), Fairness, and a live **Predictor**
-with a cost-optimal decision threshold (FN:FP = 5:1) and per-applicant SHAP
-explanations. Heavy results are precomputed into `app/artifacts/` and loaded
-instantly; the predictor runs live against `models/best_model.joblib`.
+---
 
-### Run the Notebooks
+### Phase 3 — Data Preparation
 
-Open the notebooks in Jupyter or Google Colab:
+**Preprocessing (inside a `ColumnTransformer`):**
 
-```bash
-jupyter notebook notebooks/CRISP_ML_SouthGermanCredit.ipynb
-```
+- `duration`, `amount` → Yeo-Johnson (PowerTransformer) + StandardScaler
+- `age` → StandardScaler only
+- Nominal categoricals → OneHotEncoder (`drop='first'`)
+- Ordinal categoricals → OrdinalEncoder (preserves level order)
 
-## Methodology
+**Splitting:**
 
-### 1. Data Preprocessing
-- Column renaming (German to English)
-- Train/Validation/Test split (70/15/15)
-- Feature scaling with StandardScaler
+- 70/15/15 stratified train / validation / test (preserves the 70/30 ratio)
 
-### 2. Models Evaluated
-- Logistic Regression
+**Class Balancing:**
+
+- RandomUnderSampler, SMOTE, KMeansSMOTE, **SMOTETomek** compared
+- Resampling lives **inside** the imbalanced-learn pipeline → applied only on the training fold (no leakage)
+
+---
+
+### Phase 4 — Modeling
+
+**Models Evaluated:**
+
+- Logistic Regression (baseline)
 - K-Nearest Neighbors
 - Decision Tree
 - Random Forest
 - Support Vector Machine
 - Multi-Layer Perceptron
-- XGBoost
+- XGBoost (tuned via GridSearchCV)
 
-### 3. Class Imbalance Handling
-- Random Undersampling
-- SMOTE (Synthetic Minority Oversampling)
-- KMeans-SMOTE
-- SMOTETomek (hybrid approach)
+**Evaluation Strategy:**
 
-### 4. Evaluation
-- Cross-validation with RepeatedStratifiedKFold
-- Metrics: Accuracy, Precision, Recall, F1, ROC-AUC
-- Focus on Recall to minimize false negatives (missed bad credits)
+- `RepeatedStratifiedKFold(5×3)` → every number is the mean over 15 folds
+- GridSearchCV for XGBoost hyperparameters
+- **XGBoost + SMOTETomek** selected for the best Recall / train-test stability balance
 
-## Key Findings
+---
 
-1. **Class Imbalance Impact**: Without resampling, models achieved high accuracy but poor recall for the minority class (bad credit)
+### Phase 5 — Evaluation
 
-2. **SMOTETomek Effectiveness**: Combining SMOTE oversampling with Tomek links cleaning significantly improved recall from ~0.18 to ~0.53
+**Final model — stable 15-fold CV estimate** (reported instead of a single 150-row test draw, which is high-variance):
 
-3. **Best Configuration**: XGBoost + SMOTETomek provides the best balance between detecting bad credits (recall) and overall performance (F1)
+| Metric    | CV (mean ± sd) |
+| --------- | -------------- |
+| Accuracy  | 0.75 ± 0.04    |
+| Precision | 0.60 ± 0.08    |
+| Recall    | 0.50 ± 0.06    |
+| F1 Score  | 0.54 ± 0.06    |
+| ROC-AUC   | 0.77 ± 0.04    |
 
-## Tech Stack
+**Key Insights:**
 
-- **Python** 3.8+
-- **pandas** / **numpy** - Data manipulation
-- **scikit-learn** - ML pipelines and models
-- **XGBoost** - Gradient boosting classifier
-- **imbalanced-learn** - Resampling techniques
-- **Streamlit** - Web application
-- **matplotlib** / **seaborn** - Visualization
+- **Accuracy lies on imbalanced data** — without resampling, recall on the bad class falls to ~0.08
+- **A single small test set is high-variance** — re-drawing the val/test split moves recall across 0.42–0.60; the original master's unseeded split reported 0.556, which sits at the ~82nd percentile of that distribution (a favorable but normal draw, not a better model)
+- **Top drivers** (SHAP & permutation): account `status`, `credit_history`, `duration`, `amount`
+- **The 0.50 threshold is wrong for credit** — with FN 5× costlier than FP, the cost-optimal threshold drops to ~0.06, lifting recall to ~0.87
+- **Fairness** — subgroup gaps exist in `personal_status_sex` and `foreign_worker`; auditing is mandatory before deployment
 
-## License
+---
 
-This project is for educational purposes as part of the "Inteligencia Artificial y Aprendizaje Automático" course at Tecnológico de Monterrey.
+### Phase 6 — Deployment
+
+**Streamlit application** — real-time credit-risk scoring:
+
+- Interactive applicant input form
+- Good / bad prediction with class probabilities
+- Selectable decision threshold (default 0.50 or cost-optimal for FN:FP = 5:1)
+- Per-applicant SHAP risk factors (why this decision)
+- Pipeline-safe inference (the saved model handles all preprocessing)
+
+---
+
+## Quick Start
+
+### Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+### Run Jupyter Notebook
+
+```bash
+jupyter lab notebooks/CRISP_ML_SouthGermanCredit.ipynb
+```
+
+### Run Streamlit App
+
+```bash
+streamlit run app/app.py
+```
+
+---
+
+## Pipeline Architecture
+
+```
+Input Data → ColumnTransformer → SMOTETomek → XGBoost → Prediction
+```
+
+The complete pipeline is saved as a single object (`best_model.joblib`) that handles all preprocessing automatically during inference.
+
+---
+
+## Key Dependencies
+
+- pandas, numpy — Data manipulation
+- scikit-learn — ML pipeline and preprocessing
+- imbalanced-learn — SMOTE / SMOTETomek for class balancing
+- xgboost — Gradient boosting classifier
+- shap — Model explainability
+- matplotlib, seaborn — Visualization
+- streamlit — Web application deployment
+- joblib — Model serialization
+
+---
+
+*Built with CRISP-ML(Q) methodology and Streamlit*
