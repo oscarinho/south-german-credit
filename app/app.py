@@ -164,6 +164,41 @@ def section(title):
     st.markdown(f"<div class='section-header'>{title}</div>", unsafe_allow_html=True)
 
 
+# human-readable labels for the SHAP explanation (maps ColumnTransformer names)
+LABELS = {
+    "status": "Account status", "duration": "Duration", "credit_history": "Credit history",
+    "purpose": "Purpose", "amount": "Amount", "savings": "Savings",
+    "employment_duration": "Employment", "installment_rate": "Installment rate",
+    "personal_status_sex": "Personal status", "other_debtors": "Other debtors",
+    "present_residence_since": "Residence (yrs)", "property": "Property", "age": "Age",
+    "other_installment_plans": "Other inst. plans", "housing": "Housing",
+    "number_credits": "Existing credits", "job": "Job", "people_liable": "People liable",
+    "telephone": "Telephone", "foreign_worker": "Foreign worker",
+}
+CODES = {
+    "status": {1: "No account", 2: "No balance", 3: "< 200 DM", 4: ">= 200 DM"},
+    "credit_history": {0: "Delay in past", 1: "Critical acct", 2: "No credits", 3: "Existing paid", 4: "All paid"},
+    "purpose": {0: "New car", 1: "Used car", 2: "Furniture", 3: "Radio/TV", 4: "Appliances",
+                5: "Repairs", 6: "Education", 7: "Vacation", 8: "Retraining", 9: "Business", 10: "Other"},
+    "savings": {1: "Unknown/None", 2: "< 100 DM", 3: "100-500 DM", 4: "500-1000 DM", 5: ">= 1000 DM"},
+    "personal_status_sex": {1: "Male divorced", 2: "Female", 3: "Male single", 4: "Male married"},
+    "other_debtors": {1: "None", 2: "Co-applicant", 3: "Guarantor"},
+    "other_installment_plans": {1: "Bank", 2: "Stores", 3: "None"},
+    "housing": {1: "Rent", 2: "Own", 3: "Free"},
+    "telephone": {1: "No", 2: "Yes"}, "foreign_worker": {1: "Yes", 2: "No"},
+}
+
+
+def humanize(name):
+    """Turn a ColumnTransformer feature name (e.g. 'catpipe__status_4') into a
+    readable label (e.g. 'Account status: >= 200 DM')."""
+    raw = name.split("__", 1)[1] if "__" in name else name
+    base, _, val = raw.rpartition("_")
+    if base in CODES and val.isdigit():
+        return f"{LABELS.get(base, base)}: {CODES[base].get(int(val), val)}"
+    return LABELS.get(raw, raw.replace("_", " ").capitalize())
+
+
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.markdown("""<div class='sidebar-brand'>
@@ -177,7 +212,7 @@ with st.sidebar:
     options = ["Default (0.50)"]
     if ct:
         options.append(f"Cost-optimal ({opt_threshold:.2f})")
-    mode = st.radio("Decision threshold", options, index=1 if ct else 0)
+    mode = st.radio("Decision threshold", options, index=0)
     threshold = 0.50 if mode.startswith("Default") else opt_threshold
     if ct:
         st.markdown(f"""<div class='info-box' style='font-size:0.7rem;'>
@@ -300,8 +335,6 @@ with result_col:
 
         if pred == 1:
             box_class, color, verdict = "danger", DANGER, "BAD CREDIT"
-        elif proba_bad >= threshold - 0.10:
-            box_class, color, verdict = "warning", WARNING, "GOOD · BORDERLINE"
         else:
             box_class, color, verdict = "success", SUCCESS, "GOOD CREDIT"
 
@@ -355,7 +388,7 @@ with result_col:
                 feat = [f"f{i}" for i in range(Xt.shape[1])]
             dm = xgb.DMatrix(Xt, feature_names=list(feat))
             contribs = clf.get_booster().predict(dm, pred_contribs=True)[0]
-            cdf = (pd.DataFrame({"feature": feat, "c": contribs[:-1]})
+            cdf = (pd.DataFrame({"feature": [humanize(f) for f in feat], "c": contribs[:-1]})
                    .assign(a=lambda d: d["c"].abs())
                    .sort_values("a", ascending=False).head(8).iloc[::-1])
             bar = go.Figure(go.Bar(
